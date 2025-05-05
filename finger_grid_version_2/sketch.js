@@ -1,82 +1,76 @@
-function draw() {
-  background(0);
-
-  let pointerX = width / 2;
-  let pointerY = height / 2;
-
-  // Check if MediaPipe tracking is available
-  if (mediaPipe.landmarks[0]) {
-    pointerX = map(mediaPipe.landmarks[0][8].x, 1, 0, 0, capture.width);
-    pointerY = map(mediaPipe.landmarks[0][8].y, 0, 1, 0, capture.height);
-  }
-
-  // Display "wave" text at the index finger's position
-  push();
-  fill(255);
-  textAlign(CENTER, CENTER);
-  textSize(32);
-  text("wave", pointerX, pointerY);
-  pop();
-}let cols, rows;
-let spacing = 10; // Increased spacing for a larger grid
-let size = [];
-let scl = 0.10;
-
-// Webcam variables
+let images = [];
+let imageIndex = 0;
+let rects = [];
+let imagePaths = ['image1.jpg', 'image2.jpg', 'image3.jpg']; // Add your filenames
 let capture;
 let captureEvent;
 
+function preload() {
+  for (let path of imagePaths) {
+    images.push(loadImage(path));
+  }
+}
+
 function setup() {
-  createCanvas(windowWidth, windowHeight); // Make canvas fullscreen
-  cols = width / spacing;
-  rows = height / spacing;
-  rectMode(CENTER);
-  
-  captureWebcam(); // Launch webcam
+  createCanvas(windowWidth, windowHeight);
+  imageMode(CORNER);
   noStroke();
-  textAlign(LEFT, CENTER);
-  textSize(20);
-  fill('white');
+  initRects();
+  captureWebcam(); // start camera
+}
+
+function initRects() {
+  rects = [new ImgRect(0, 0, width, height)];
 }
 
 function draw() {
-  //background(255); // Uncomment to see the background color or add color to cover the text 
+  background(255);
 
   let pointerX = width / 2;
   let pointerY = height / 2;
 
-  // Check if MediaPipe tracking is available
+  // MediaPipe index finger (landmark 8)
   if (mediaPipe.landmarks[0]) {
     pointerX = map(mediaPipe.landmarks[0][8].x, 1, 0, 0, capture.scaledWidth);
     pointerY = map(mediaPipe.landmarks[0][8].y, 0, 1, 0, capture.scaledHeight);
   }
 
-  // Display "wave" text at the index finger's position
-  push();
-  fill(144, 238, 144); // light green color
-  textAlign(CENTER, CENTER);
-  textSize(32);
-  text("wave", pointerX, pointerY);
-  pop();
+  // Subdivision logic using finger position
+  let newRects = [];
+  for (let i = rects.length - 1; i >= 0; i--) {
+    if (rects[i].contains(pointerX, pointerY) && !rects[i].isTooSmall()) {
+      let divided = rects[i].subdivide();
+      newRects.push(...divided);
+      rects.splice(i, 1); // remove original
+    }
+  }
+  rects.push(...newRects);
 
-  // Draw interactive grid
-  // Removed the grid code
+  // Draw all rectangles
+  for (let r of rects) {
+    r.display();
+  }
+
+  checkSubdivisionProgress();
 }
 
-// Function: launch webcam
+function checkSubdivisionProgress() {
+  if (rects.length >= 3000) {
+    imageIndex = (imageIndex + 1) % images.length;
+    initRects();
+  }
+}
+
+// Webcam + MediaPipe setup
 function captureWebcam() {
   capture = createCapture(
     {
       audio: false,
-      video: {
-        facingMode: "user",
-      },
+      video: { facingMode: "user" },
     },
     function (e) {
       captureEvent = e;
-      console.log(captureEvent.getTracks()[0].getSettings());
       capture.srcObject = e;
-
       setCameraDimensions(capture);
       mediaPipe.predictWebcam(capture);
     }
@@ -85,7 +79,6 @@ function captureWebcam() {
   capture.hide();
 }
 
-// Function: resize webcam depending on orientation
 function setCameraDimensions(video) {
   const vidAspectRatio = video.width / video.height;
   const canvasAspectRatio = width / height;
@@ -99,15 +92,68 @@ function setCameraDimensions(video) {
   }
 }
 
-// Function: center the webcam feed
-function centerOurStuff() {
-  translate(width / 2 - capture.scaledWidth / 2, height / 2 - capture.scaledHeight / 2);
-}
-
-// Function: window resize
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  cols = width / spacing;
-  rows = height / spacing;
   setCameraDimensions(capture);
+  initRects();
+}
+
+// Rectangle class for image subdivision
+class ImgRect {
+  constructor(x, y, w, h) {
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.c = this.getAverageColor();
+  }
+
+  contains(px, py) {
+    return px >= this.x && px < this.x + this.w &&
+           py >= this.y && py < this.y + this.h;
+  }
+
+  isTooSmall() {
+    return this.w < 4 || this.h < 4;
+  }
+
+  getAverageColor() {
+    let img = images[imageIndex];
+    let x1 = constrain(floor(map(this.x, 0, width, 0, img.width)), 0, img.width - 1);
+    let y1 = constrain(floor(map(this.y, 0, height, 0, img.height)), 0, img.height - 1);
+    let x2 = constrain(floor(map(this.x + this.w, 0, width, 0, img.width)), 0, img.width);
+    let y2 = constrain(floor(map(this.y + this.h, 0, height, 0, img.height)), 0, img.height);
+
+    let r = 0, g = 0, b = 0, count = 0;
+
+    for (let x = x1; x < x2; x++) {
+      for (let y = y1; y < y2; y++) {
+        let c = img.get(x, y);
+        r += c[0];
+        g += c[1];
+        b += c[2];
+        count++;
+      }
+    }
+
+    if (count === 0) return color(255);
+    return color(r / count, g / count, b / count);
+  }
+
+  display() {
+    fill(this.c);
+    rect(this.x, this.y, this.w, this.h);
+  }
+
+  subdivide() {
+    let rects = [];
+    if (this.w > this.h) {
+      rects.push(new ImgRect(this.x, this.y, this.w / 2, this.h));
+      rects.push(new ImgRect(this.x + this.w / 2, this.y, this.w / 2, this.h));
+    } else {
+      rects.push(new ImgRect(this.x, this.y, this.w, this.h / 2));
+      rects.push(new ImgRect(this.x, this.y + this.h / 2, this.w, this.h / 2));
+    }
+    return rects;
+  }
 }
