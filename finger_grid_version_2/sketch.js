@@ -1,9 +1,12 @@
 let images = [];
 let imageIndex = 0;
 let rects = [];
-let imagePaths = ['image1.jpg', 'image2.jpg', 'image3.jpg']; // Add your filenames
+let imagePaths = ['image1.jpg', 'image2.jpg', 'image3.jpg'];
 let capture;
-let captureEvent;
+let mediaPipe = {
+  holistic: null,
+  landmarks: null
+};
 
 function preload() {
   for (let path of imagePaths) {
@@ -16,7 +19,7 @@ function setup() {
   imageMode(CORNER);
   noStroke();
   initRects();
-  captureWebcam(); // start camera
+  captureWebcam();
 }
 
 function initRects() {
@@ -29,29 +32,36 @@ function draw() {
   let pointerX = width / 2;
   let pointerY = height / 2;
 
-  // MediaPipe index finger (landmark 8)
-  if (mediaPipe.landmarks[0]) {
-    pointerX = map(mediaPipe.landmarks[0][8].x, 1, 0, 0, capture.scaledWidth);
-    pointerY = map(mediaPipe.landmarks[0][8].y, 0, 1, 0, capture.scaledHeight);
+  if (mediaPipe.landmarks && mediaPipe.landmarks.faceLandmarks) {
+    let nose = mediaPipe.landmarks.faceLandmarks[1]; // Nose tip
+    pointerX = map(nose.x, 0, 1, width, 0);  // flip horizontally
+    pointerY = map(nose.y, 0, 1, 0, height);
+    drawNoseDebug(pointerX, pointerY);
   }
 
-  // Subdivision logic using finger position
   let newRects = [];
   for (let i = rects.length - 1; i >= 0; i--) {
     if (rects[i].contains(pointerX, pointerY) && !rects[i].isTooSmall()) {
       let divided = rects[i].subdivide();
       newRects.push(...divided);
-      rects.splice(i, 1); // remove original
+      rects.splice(i, 1);
     }
   }
   rects.push(...newRects);
 
-  // Draw all rectangles
   for (let r of rects) {
     r.display();
   }
 
   checkSubdivisionProgress();
+}
+
+function drawNoseDebug(x, y) {
+  push();
+  fill(255, 0, 0);
+  noStroke();
+  ellipse(x, y, 10, 10);
+  pop();
 }
 
 function checkSubdivisionProgress() {
@@ -61,22 +71,44 @@ function checkSubdivisionProgress() {
   }
 }
 
-// Webcam + MediaPipe setup
 function captureWebcam() {
   capture = createCapture(
     {
       audio: false,
       video: { facingMode: "user" },
     },
-    function (e) {
-      captureEvent = e;
-      capture.srcObject = e;
+    function () {
       setCameraDimensions(capture);
-      mediaPipe.predictWebcam(capture);
     }
   );
+
   capture.elt.setAttribute("playsinline", "");
   capture.hide();
+
+  mediaPipe.holistic = new Holistic({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+  });
+
+  mediaPipe.holistic.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+
+  mediaPipe.holistic.onResults((results) => {
+    mediaPipe.landmarks = results;
+  });
+
+  const camera = new Camera(capture.elt, {
+    onFrame: async () => {
+      await mediaPipe.holistic.send({ image: capture.elt });
+    },
+    width: 640,
+    height: 480
+  });
+
+  camera.start();
 }
 
 function setCameraDimensions(video) {
@@ -98,7 +130,6 @@ function windowResized() {
   initRects();
 }
 
-// Rectangle class for image subdivision
 class ImgRect {
   constructor(x, y, w, h) {
     this.x = x;
@@ -125,7 +156,6 @@ class ImgRect {
     let y2 = constrain(floor(map(this.y + this.h, 0, height, 0, img.height)), 0, img.height);
 
     let r = 0, g = 0, b = 0, count = 0;
-
     for (let x = x1; x < x2; x++) {
       for (let y = y1; y < y2; y++) {
         let c = img.get(x, y);
@@ -135,7 +165,6 @@ class ImgRect {
         count++;
       }
     }
-
     if (count === 0) return color(255);
     return color(r / count, g / count, b / count);
   }
